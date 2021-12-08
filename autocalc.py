@@ -66,8 +66,7 @@ def _getpowermagnitude(unit):
         ret += getattr(unit, "yearturn", 0)/3
     return ret
 
-def _getoffense(unit, realstr, realprec):
-
+def _getoffense(unit, realstr, realprec, realatt):
     maxammoturns = 0
     totalweapondmg = 0.0
     for weapon in unit.weapons:
@@ -173,6 +172,10 @@ def _getoffense(unit, realstr, realprec):
                 if range > 1:
                     dmg *= getdrn((realprec + weapon.att) - (range/5))
 
+                if weapon.aoe == 0 and range <= 1:
+                    finalatt = realatt + weapon.att
+                    dmg *= getdrn(finalatt - 11)
+
                 if weapon.spec & 4096: dmg /= 2  # MRN
                 if weapon.spec & 17592186044416: dmg /= 1.5  # MR hard
                 if weapon.spec & 16777216: dmg /= 3.5  # MR easy
@@ -235,8 +238,12 @@ def _getrealdef(unit):
         if armour.type == 4:  # shields
             shielddef += armour.def_ - armour.enc
             shieldprot += armour.zones[5]  # shield zone
+        else:
+            realdef += armour.def_
+    for weapon in unit.weapons:
+        realdef += weapon.def_
     if shielddef != 0 or shieldprot != 0:
-        additionaldef = 0.8 * shielddef * getdrn(shieldprot)
+        additionaldef = 1.2 * shielddef * getdrn(shieldprot)
         print(f"Shield added {additionaldef} def, new def = {realdef + additionaldef}")
         realdef += additionaldef
         # shieldcost = realmaxhp/2 * shieldhitmult * getdrn(shieldprot)
@@ -302,6 +309,9 @@ def _getrealenc(unit):
     realenc -= getattr(unit, "reinvigoration", 0)
     realenc -= getattr(unit, "landreinvigoration", 0)
     realenc += max(0, getattr(unit, "landenc", 0))
+    if getattr(unit, "mounted", 0) <= 0:
+        for armour in unit.armours:
+            realenc += armour.enc
     return realenc
 
 def _getrealmor(unit):
@@ -320,7 +330,7 @@ def _getrealmaxhp(unit):
     totalregen = max(0, getattr(unit, "regeneration", 0)) + max(0, getattr(unit, "uwregen", 0))
     totalregen += max(0, getattr(unit, "incorporate", 0))
     if totalregen > 0:
-        regenvalue = 0.3 * totalregen * 2 ** ((realmaxhp - 10)/40)
+        regenvalue = 0.3 * totalregen * 2 ** ((realmaxhp - 10)/27)
         print(f"Regen increased max hp from {realmaxhp} to {realmaxhp + regenvalue}")
         realmaxhp += regenvalue
 
@@ -387,6 +397,34 @@ def _callForOtherShapes(unit, func, retval, altshapelist, donotaddsecondshapes=F
                 retval += newshapescore
     return retval
 
+def _getrepelvalue(unit, realatt):
+    lengthToRepelCapacity = {0:0, 1:0.15, 2:0.5, 3:0.8, 4:0.9, 5:0.99, 6:1.0}
+    repelvalue = 0.0
+    for weapon in unit.weapons:
+        if weapon.range > 0:
+            continue
+        # cannot be used for repelling spec
+        if weapon.spec & 137438953472:
+            continue
+        if weapon.len == 0:
+            continue
+        reallen = weapon.len
+        if unit.size >= 4:
+            reallen += 1
+        attForThisWeapon = realatt + weapon.att
+        attdrn = 1 + 3 * ((attForThisWeapon - 10) / 11) ** 3 + (attForThisWeapon - 10) / 4
+        contributionForThisWeapon = attdrn * lengthToRepelCapacity[reallen]
+        print(f"Repel contribution for {weapon.name} = {contributionForThisWeapon}")
+        repelvalue += contributionForThisWeapon
+    print(f"Total repel value: {repelvalue}")
+    return repelvalue
+
+
+
+
+
+
+
 def _scorechassiscombat(unit, altshapes=None, commandermode=False):
     if altshapes is None:
         altshapelist = [unit.origid]
@@ -410,6 +448,13 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
     realmor = _getrealmor(unit)
     realmaxhp = _getrealmaxhp(unit)
 
+    print(f"Real attack = {realatt}")
+    print(f"Real defence = {realdef}")
+    print(f"Real str = {realstr}")
+    print(f"Real enc = {realenc}")
+    print(f"Real mor = {realmor}")
+    print(f"Real maxhp = {realmaxhp}")
+
     # Initially I tried exponentials, but this made defstacked cav (eg vans) score really really highly: ~220g
     # This cubic function is less extreme, and also flips negative at (skill - 10) < 7
 
@@ -418,35 +463,44 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
     #mrdrn = 2 ** ((realmr - 12)/5)
     #mordrn = 2 ** ((realmor - 10)/4)
 
-    attdrn = 1 + 3 * ((realatt - 10)/15)**3 + (realatt - 10)/4
-    defdrn = 1 + 3 * ((realdef - 10)/15)**3 + (realdef - 10)/4
+
+    defdrn = 1 + 3 * ((realdef - 10)/11)**3 + (realdef - 10)/4
     mrdrn = 1 + 3 * ((realmr - 12)/18)**3 + (realmr - 12)/4
     mordrn = 1 + 3 * ((realmor - 10)/18)**3 + (realmor - 12)/6
 
-    attcost = math.sqrt(realmaxhp) * attdrn * 0.7
-    defcost = math.sqrt(realmaxhp) * defdrn * 0.7
+    # I used to use sqrt(maxhp), but it tended to undervalue really high hp pools
+    # purely because they could take damage in battle, not die, and then be at full health afterwards
+    # or take regen better
+    # Quadratic + sqrt seems to make more sense
+    hpscalar = 0.00008 * (realmaxhp-6) ** 2 + 0.3 * math.sqrt(realmaxhp*3)
+
+    repelvalue = _getrepelvalue(unit, realatt)
+    repelcost = hpscalar * repelvalue * 0.7
+
+
+    defcost = hpscalar * defdrn * 1.5
     if getattr(unit, "mounted", 0) > 0:
         print(f"Is mounted, increased def cost from {defcost}")
         # halved harass penalty
-        defcost *= 3
+        defcost *= 1.8
     #strcost = 22/8 * realmaxhp * (realstr - 10)
-    enccost = 1/10 * math.sqrt(realmaxhp) * (3 - realenc)
-    mrcost = 1/5 * math.sqrt(realmaxhp) * mrdrn
+    enccost = 1/7 * hpscalar * (3 - realenc)
+    mrcost = 1/2 * hpscalar * mrdrn
     # This hopefully encompasses general ease of being repelled as well as routing issues
-    morcost = 1/3 * math.sqrt(realmaxhp) * mordrn
+    morcost = hpscalar * mordrn
 
     # This should be based primarily on weapons (so things with good weapons do a bit better, or supernatural abilities
     # like drake fire score really highly)
 
-    offense = _getoffense(unit, realstr, realprec)
+    offense = _getoffense(unit, realstr, realprec, realatt)
     # This is probably a bit disjointed, but men in robes with fists are REALLY bad
     if offense >= 0.0:
         offensedrn = offense ** 0.5
     else:
         offensedrn = offense
-    offensecost = (realmaxhp ** 0.6) * offensedrn * 0.3
+    offensecost = hpscalar * offensedrn * 1.5
     print(f"Total offense cost: {offensecost}")
-    print(f"Attcost: {attcost}")
+    print(f"Repelcost: {repelcost}")
     print(f"Defcost: {defcost}")
     print(f"Enccost: {enccost}")
     print(f"Mrcost: {mrcost}")
@@ -458,100 +512,100 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
     realprot -= 8
     natprotval = ((realprot/20)**3) + (realprot/16)
 
-    natprotcost = math.sqrt(realmaxhp) * natprotval * 1
+    natprotcost = hpscalar * natprotval * 5
     print(f"protcost: {natprotcost}")
 
-    retval = attcost + defcost + enccost + mrcost + morcost + natprotcost + offensecost
+    retval = repelcost + defcost + enccost + mrcost + morcost + natprotcost + offensecost
 
     if getattr(unit, "fear", 0) >= 5:
         fearval = 2 ** ((getattr(unit, "fear", 0) - 5)/15)
-        fearcost = 1/2 * math.sqrt(realmaxhp) * fearval
+        fearcost = 1/2 * hpscalar * fearval
         print(f"Fearcost: {fearcost}")
         retval += fearcost
 
     totalaura = max(0, getattr(unit, "heat", 0), getattr(unit, "cold", 0), getattr(unit, "uwheat", 0))
     if totalaura > 0:
         auraval = 2 ** ((totalaura - 3)/10)
-        auracost = 1 / 2 * math.sqrt(realmaxhp) * auraval
+        auracost = 1 / 2 * hpscalar * auraval
         print(f"Temperature aura cost: {auracost}")
         retval += auraval
 
     totalaura = max(0, getattr(unit, "disbelieve", 0))
     if totalaura > 0:
         auraval = 2 ** ((totalaura - 3)/10)
-        auracost = 1 / 2 * math.sqrt(realmaxhp) * auraval
+        auracost = 1 / 2 * hpscalar * auraval
         print(f"Disbelieve aura cost: {auracost}")
         retval += auraval
 
     if getattr(unit, "fireshield", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "fireshield", 0) - 5)/5)
-        abilitycost = 1/2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/2 * hpscalar * abilityval
         print(f"Fireshield cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "curseluckshield", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "curseluckshield", 0))/3)
-        abilitycost = 1/3 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/3 * hpscalar * abilityval
         print(f"curseluckshield cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "horrormark", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "horrormark", 0))/3)
-        abilitycost = 1/3 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/3 * hpscalar * abilityval
         print(f"horrormark cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "uwfireshield", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "fireshield", 0) - 5)/5)
-        abilitycost = 1/2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/2 * hpscalar * abilityval
         print(f"uwfireshield cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "acidshield", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "acidshield", 0) - 5)/5)
-        abilitycost = 1/2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/2 * hpscalar * abilityval
         print(f"acidshield cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "poisonarmor", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "poisonarmor", 0))/20)
-        abilitycost = 1/2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/2 * hpscalar * abilityval
         print(f"Poisonbarbs cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "poisonskin", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "poisonarmor", 0))/30)
-        abilitycost = 1/3 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/3 * hpscalar * abilityval
         print(f"Poisonbarbs cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "curseattacker", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "curseattacker", 0))/2)
-        abilitycost = 1/8 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/8 * hpscalar * abilityval
         print(f"curseattacker cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "banefireshield", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "banefireshield", 0)-2)/4)
-        abilitycost = 1/2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/2 * hpscalar * abilityval
         print(f"Banefireshield cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "damagerev", 0) > 0:
         abilityval = 2 ** (getattr(unit, "damagerev", 0))
-        abilitycost = math.sqrt(realmaxhp) * abilityval
+        abilitycost = hpscalar * abilityval
         print(f"Damage reversal cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "poisoncloud", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "poisoncloud", 0) - 3) / 4)
-        abilitycost = 1 / 2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1 / 2 * hpscalar * abilityval
         print(f"Poisoncloud cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "diseasecloud", 0) > 0:
         abilityval = 2 ** ((getattr(unit, "diseasecloud", 0) - 5)/5)
-        abilitycost = 1/2 * math.sqrt(realmaxhp) * abilityval
+        abilitycost = 1/2 * hpscalar * abilityval
         print(f"Diseasecloud cost: {abilitycost}")
         retval += abilitycost
 
@@ -727,7 +781,7 @@ def _scoremiscunitonly(unit, score, altshapes=None):
     retval = score
 
     if getattr(unit, "undisciplined", 0) > 0:
-        retval *= 0.8
+        retval *= 0.95
     if getattr(unit, "formationfighter", 0) > 0:
         retval *= 1.08
     if getattr(unit, "immobile", 0) > 0:
@@ -982,11 +1036,32 @@ def commander(unit, forTempUnits=False):
             for path in utils.MAGIC_PATHS:
                 if getattr(unloadedPaths, path, 0) > 0:
                     setattr(unloadedPaths, path, getattr(unloadedPaths, path) + getattr(unloadedPaths, attrib))
-
-    pathpoints = 0.0
+    maxpathLevel = 0
+    numOfPaths = 0
+    sumOfPaths = 0.0
     for path in utils.MAGIC_PATHS:
         if path != "H":
-            addition = max(0.0, getattr(unloadedPaths, path, 0.0)) ** PATH_LEVEL_EXPONENT
+            pathval = getattr(unloadedPaths, path, 0.0)
+            if maxpathLevel is None or maxpathLevel < pathval:
+                maxpathLevel = pathval
+            if pathval > 0.0:
+                numOfPaths += 1
+            if pathval >= 0.0:
+                sumOfPaths += pathval
+    pathpoints = 0.0
+    print(f"Highest path={maxpathLevel}, numpaths={numOfPaths}, totalpathlevels={sumOfPaths}")
+    for path in utils.MAGIC_PATHS:
+        if path != "H":
+            pathlevel = getattr(unloadedPaths, path, 0.0)
+            addition = max(0.0, pathlevel) ** PATH_LEVEL_EXPONENT
+            # Wide and short is not good, a mage can only do one thing per turn
+            if addition > 0:
+                proportionoftotal = addition/sumOfPaths
+                amounttomess = 1-proportionoftotal
+                widemod = 1 - math.sqrt(1/numOfPaths)
+                proportionOfBiggestMod = math.sqrt(pathlevel/maxpathLevel)
+                print(f"Spread out mage modifier subtracts {addition * amounttomess * proportionOfBiggestMod * widemod}")
+                addition -= addition * amounttomess * proportionOfBiggestMod * widemod
             pathpoints += addition
             print(f"Path {path} added {addition} pathpoints")
         else:
@@ -1069,5 +1144,3 @@ def unit(unit):
     retval = int(round(retval, 0))
     print(f"Final unit score: {retval}\n\n\n")
     return max(1, retval)
-
-unitscore = unit
