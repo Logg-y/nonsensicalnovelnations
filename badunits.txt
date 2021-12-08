@@ -1,0 +1,11 @@
+326 -- blood slave
+623	-- king of the world, is a strange looking horror duplicate
+334	-- golden naga, incorrect sprite/stats
+3036	-- unused erythreian priest, bad sprite
+3037	-- unused erythreian priest, bad sprite
+382	-- pathless arcoscephalian mystic
+2142	-- nithing, bad sprite
+1001	-- asmeg, bad sprite
+1002	-- asmeg jarl, bad sprite
+1413	-- trident lord, bad sprite
+1414	-- trident lord, bad sprite
