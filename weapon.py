@@ -18,6 +18,7 @@ class Weapon(object):
         self.len = int(data["len"])
         self.nratt = int(data["nratt"])
         self.ammo = int(data["ammo"])
+        self.rcost = int(data["rcost"])
         self.secondaryeffectid = int(data["secondaryeffect"])
         self.secondaryeffect = None
         self.secondaryeffectid = int(data["secondaryeffect"])

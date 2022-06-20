@@ -13,6 +13,7 @@ import naming
 import struct
 import nation
 import re
+import poptypes
 
 from utils import HIGHEST_UNIT_ID_TO_MAKE_POOL_WITH, _writetoconsole, _listToWords, _recursiveshapesearch, \
     _getshrinkhpchain
@@ -22,6 +23,7 @@ ver = "0.0.1"
 
 def generate(**options):
     numnations = options.get("numnations", 50)
+    newpoptypes = options.get("newpoptypes", 1)
     modname = options.get("modname", "")
     utils.NATION_ID_START = options.get("startnationid", 120)
     utils.UNIT_ID_START = options.get("startunitid", 3550)
@@ -70,29 +72,41 @@ def generate(**options):
         modcontent = ""
         with open(outfp, "w") as outf:
             outf.write('#modname "NonsensicalNovelNations-' + modname + '"' + "\n")
-            outf.write("#disableoldnations\n")
-            _writetoconsole("Beginning generation...")
+            if numnations > 0:
+                outf.write("#disableoldnations\n")
+                _writetoconsole("Beginning generation...")
 
-            for nationidoffset in range(0, numnations):
-                # This does need to be a deep copy, otherwise pretender stuff will edit the reference in the master
-                # pool which carries over
-                pool = copy.deepcopy(unitpool)
-                if fixedseeds is not None:
-                    seed = int(fixedseeds.pop(0))
-                else:
-                    seed = struct.unpack("<q", os.urandom(8))[0]
-                nationobj = nation.NationBuilder(pool, seed, **options)
-                modcontent +=  nationobj.modcontent
-                nationnames.append(nationobj.nationname)
-                seeds.append(nationobj.seed)
-                _writetoconsole(f"Created nation {nationobj.nationname}: {nationidoffset + 1} of {numnations},"
-                                f" with seed {seed}...")
-            outf.write('#descripion "A NonsensicalNovelNation pack, generated with version ' + ver + '."' + "\n")
-            for i, nationname in enumerate(nationnames):
-                seed = str(seeds[i])
-                outf.write(f"-- Nation {nationname} generated with seed {seed}\n")
-            outf.write(modcontent)
+                for nationidoffset in range(0, numnations):
+                    # This does need to be a deep copy, otherwise pretender stuff will edit the reference in the master
+                    # pool which carries over
+                    pool = copy.copy(unitpool)
+                    if fixedseeds is not None:
+                        seed = int(fixedseeds.pop(0))
+                    else:
+                        seed = struct.unpack("<q", os.urandom(8))[0]
+                    nationobj = nation.NationBuilder(pool, seed, **options)
+                    modcontent +=  nationobj.modcontent
+                    nationnames.append(nationobj.nationname)
+                    seeds.append(nationobj.seed)
+                    _writetoconsole(f"Created nation {nationobj.nationname}: {nationidoffset + 1} of {numnations},"
+                                    f" with seed {seed}...")
+                outf.write('#descripion "A NonsensicalNovelNation pack, generated with version ' + ver + '."' + "\n")
+                for i, nationname in enumerate(nationnames):
+                    seed = str(seeds[i])
+                    outf.write(f"-- Nation {nationname} generated with seed {seed}\n")
+                outf.write(modcontent)
+
+            if options.get("equipmentresourcecosts", 1):
+                _writetoconsole("Beginning equipment resource calculation...")
+                outf.write(autocalc.equipmentresourcecosts())
+
+            if newpoptypes:
+                _writetoconsole("Beginning new independents...")
+                poptypecontent = poptypes.newpoptypes(copy.copy(unitpool), **options)
+                outf.write(poptypecontent)
+
             _writetoconsole(f"Finished writing {outfp}!")
+
 
 
 

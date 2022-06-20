@@ -4,6 +4,7 @@ import autocalc
 import utils
 import math
 import unitinbasedatafinder
+import copy
 
 class NationBuilder(object):
     def __init__(self, pool, seed, **options):
@@ -178,97 +179,18 @@ class NationBuilder(object):
 
         self.modcontent += outputText
 
-    def _modCommandsForNewUnit(self, unit, iscom=False, additionalModCmds=""):
-        "Prepare .dm mod commands for the given unit. Returns (mod commands, \
-        primary ID (not secondshapes etc) of the copied unit)"
-        out = ""
-        returnval_unit_id = None
-        allshapes = utils._recursiveshapesearch(unit)
-        numberOfIDsNeededPerUnit = {}
-        vanillaAltshapeIDsToNewIDs = {}
-        for uid in allshapes:
-            shrinkchain = utils._getshrinkhpchain(unitinbasedatafinder.get(uid))
-            numberOfIDsNeededPerUnit[uid] = max(1, len(shrinkchain) + 1)
-
-        for shape in allshapes:
-            vanillaAltshapeIDsToNewIDs[shape] = utils.UNIT_ID_START
-            utils.UNIT_ID_START += numberOfIDsNeededPerUnit[shape]
-
-        additionalModCmds += unit.enforcePositiveGoldCost()
-
-        for shape in allshapes:
-            out += f"#selectmonster {vanillaAltshapeIDsToNewIDs[shape]}\n"
-            out += f"#copystats {shape}\n"
-            out += f"#copyspr {shape}\n"
-            # Make it not a pretender
-            if getattr(unit, "startdom", 0) > 0:
-                out += f"#homerealm 9\n"
-                out += f"#startdom 0\n"
-            if unit.aquatic >= 0:
-                out += "#amphibian\n"
-            if unit.triplegod >= 0:
-                out += "#triplegod 0\n"
-            # latehero seemingly confers uniqueness so also needs to go
-            if getattr(unit, "latehero", 0) > 0:
-                out += "#latehero 0\n"
-            out += additionalModCmds
-
-            out += f"#gcost {unit.gcost}\n"
-            if not iscom:
-                # not clearing magic seems to inflate RP costs of mages
-                out += "#clearmagic\n"
-                # Rec point adjustment
-                if unit.startage > 0 and math.sqrt(unit.startage * 4) > unit.gcost:
-                    out += f"#rpcost {int(unit.gcost + math.sqrt(unit.startage / 2))}\n"
-            altshapes = ["shapechange", "forestshape", "plainshape", "homeshape", "domshape", "notdomshape",
-                         "springshape",
-                         "summershape", "autumnshape", "wintershape", "landshape", "watershape", "firstshape",
-                         "secondshape",
-                         "secondtmpshape"]
-            unitForThisShape = unitinbasedatafinder.get(shape)
-            for altshapeattrib in altshapes:
-                attribval = getattr(unitForThisShape, altshapeattrib, 0)
-                if attribval > 0:
-                    out += f"#{altshapeattrib} {vanillaAltshapeIDsToNewIDs[attribval]}\n"
-            out += "#end\n"
-            if returnval_unit_id is None:
-                returnval_unit_id = vanillaAltshapeIDsToNewIDs[shape]
-            if numberOfIDsNeededPerUnit[shape] > 1:
-                out += f"-- This unit has {numberOfIDsNeededPerUnit[shape] - 1} shrinkhp or xpshapes that must follow it"
-                for index, chainshape in enumerate(shrinkchain):
-                    shapeUnitObj = unitinbasedatafinder.get(chainshape)
-                    out += f"#selectmonster {vanillaAltshapeIDsToNewIDs[shape] + index + 1}\n"
-                    out += f"#copystats {chainshape}\n"
-                    out += f"#copyspr {chainshape}\n"
-                    if getattr(shapeUnitObj, "latehero", 0) > 0:
-                        out += "#latehero 0\n"
-                    if shapeUnitObj.aquatic >= 0:
-                        out += "#amphibian\n"
-                    if shapeUnitObj.triplegod >= 0:
-                        out += "#triplegod 0\n"
-                    # not clearing magic seems to inflate RP costs of mages
-                    if iscom:
-                        out += f"#gcost {unit.gcost}\n"
-                    else:
-                        out += f"#gcost {unit.gcost}\n"
-                        out += "#clearmagic\n"
-                        out += "#end\n"
-        out += "\n\n"
-
-        return (out, returnval_unit_id)
-
     def collectUnitsFromPool(self, **options):
         numunits = options.get("numunits", 15)
         unitsadded = 0
         for x in range(0, numunits):
-            unit = self.pool.pop(0)
+            unit = copy.deepcopy(self.pool.pop(0))
             print(f"Add unit to nation: {unit}")
             self.addrecunit.append(unit)
 
         for unit in self.addrecunit:
             gcost = autocalc.unit(unit)
             unit.gcost = gcost
-            ret = self._modCommandsForNewUnit(unit, iscom=False, additionalModCmds=f"-- Unit for nation: {unit.name}\n")
+            ret = utils.modCommandsForNewUnit(unit, iscom=False, additionalModCmds=f"-- Unit for nation: {unit.name}\n")
             self.modcontent += ret[0]
             self.allUnitIDsToUnitObjs[ret[1]] = unit
             if gcost >= 50:
@@ -300,7 +222,9 @@ class NationBuilder(object):
         lessermageconstraint = False
         bigmageconstraint = False
         while len(self.addreccom) < numcommanders:
-            unit = self.pool.pop(0)
+            if len(self.pool) == 0:
+                print(f"No more commanders in pool! ")
+            unit = copy.deepcopy(self.pool.pop(0))
             if commandersadded == 0:
                 if unit.stealthy <= 0:
                     continue
@@ -316,6 +240,12 @@ class NationBuilder(object):
 
             if nationTotalpaths + totalpaths > options.get("maxtotalpathspernation", 15):
                 continue
+
+            # Getting a big mage first can fill up the total paths per nation and make it unable to find a lesser mage
+            # because taking it would push it over the max total
+            if not lessermageconstraint and (totalpaths > 2.0):
+                if nationTotalpaths + totalpaths > options.get("maxtotalpathspernation", 15) - 2:
+                    continue
 
             if commandersadded == 3 and not lessermageconstraint:
                 if not (totalpaths > 0.0 and totalpaths <= 2.0):
@@ -357,7 +287,7 @@ class NationBuilder(object):
             additional = f"-- Commander for nation: {unit.name}\n"
             if unit in self.strcommanders:
                 additional += f"#rpcost {self.strcommanders[unit]}\n"
-            ret = self._modCommandsForNewUnit(unit, iscom=True, additionalModCmds=additional)
+            ret = utils.modCommandsForNewUnit(unit, iscom=True, additionalModCmds=additional)
             self.modcontent += ret[0]
             newUnitID = ret[1]
             self.allCmdrIDsToUnitObjs[newUnitID] = unit
@@ -394,7 +324,7 @@ class NationBuilder(object):
         additionalmodcmdlist = []
         numberOfPretendersByStartdom = {}
         while len(unitlist) < pretenderCount:
-            unit = self.pool.pop(0)
+            unit = copy.deepcopy(self.pool.pop(0))
             # These things that mean a unit should not be a pretender...
             if getattr(unit, "holy", 0) > 0:
                 continue
@@ -445,7 +375,7 @@ class NationBuilder(object):
         for index, pretenderunit in enumerate(unitlist):
             additionalModCmds = additionalmodcmdlist[index]
             additionalModCmds += f"-- Pretender for nation: {pretenderunit.name}\n"
-            ret = self._modCommandsForNewUnit(pretenderunit, iscom=True, additionalModCmds=additionalModCmds)
+            ret = utils.modCommandsForNewUnit(pretenderunit, iscom=True, additionalModCmds=additionalModCmds)
             self.modcontent += ret[0]
             self.realPretenderUnitIDs.append(ret[1])
 
@@ -559,7 +489,7 @@ class NationBuilder(object):
             random.shuffle(commandersToCheck)
             leadership = ["leader"]
             for selected in [selectedUnit, selectedUnit2]:
-                if getattr(selected, "undead", 0) > 0:
+                if getattr(selected, "undead", 0) > 0 or getattr(selected, "demon", 0) > 0:
                     leadership.append("undeadleader")
                 if getattr(selected, "magicbeing", 0) > 0:
                     leadership.append("magicleader")
@@ -657,7 +587,7 @@ class NationBuilder(object):
             commandersToCheck = self.possiblePDCommanders[:]
             random.shuffle(commandersToCheck)
             leadership = "leader"
-            if getattr(selectedUnit, "undead", 0) > 0:
+            if getattr(selectedUnit, "undead", 0) > 0 or getattr(selectedUnit, "demon", 0) > 0:
                 leadership = "undeadleader"
             elif getattr(selectedUnit, "magicbeing", 0) > 0:
                 leadership = "magicleader"
@@ -684,7 +614,7 @@ class NationBuilder(object):
                 continue
 
             # Work out multiplicity for the units...
-            gcost = autocalc._scorechassiscombat(selectedUnit)
+            gcost = autocalc.scorechassiscombat(selectedUnit)
             gcost = max(2, gcost)
             multiplicity = max(1, int(100 / gcost))
             out += f"#wallcom {commanderUID}\n"
@@ -702,12 +632,12 @@ class NationBuilder(object):
 
         out += f"#defcom1 {commanderUID}\n"
         out += f"#defunit1 {selectedUID}\n"
-        gcost = autocalc._scorechassiscombat(selectedUnit)
+        gcost = autocalc.scorechassiscombat(selectedUnit)
         gcost = max(2, gcost)
         multiplicity = max(1, int(100 / gcost))
         out += f"#defmult1 {multiplicity}\n"
         out += f"#defunit1b {selectedUID2}\n"
-        gcost = autocalc._scorechassiscombat(selectedUnit2)
+        gcost = autocalc.scorechassiscombat(selectedUnit2)
         gcost = max(2, gcost)
         multiplicity2 = max(1, int(100 / gcost))
         out += f"#defmult1b {multiplicity2}\n"
@@ -720,12 +650,12 @@ class NationBuilder(object):
              44, (28, 38))
         out += f"#defcom2 {commanderUID}\n"
         out += f"#defunit2 {selectedUID}\n"
-        gcost = autocalc._scorechassiscombat(selectedUnit)
+        gcost = autocalc.scorechassiscombat(selectedUnit)
         gcost = max(2, gcost)
         multiplicity = max(1, int(100 / gcost))
         out += f"#defmult2 {multiplicity}\n"
         out += f"#defunit2b {selectedUID2}\n"
-        gcost = autocalc._scorechassiscombat(selectedUnit2)
+        gcost = autocalc.scorechassiscombat(selectedUnit2)
         gcost = max(2, gcost)
         multiplicity2 = max(1, int(100 / gcost))
         out += f"#defmult2b {multiplicity2}\n"
@@ -740,12 +670,12 @@ class NationBuilder(object):
 
         out += f"#startcom {commanderUID}\n"
         out += f"#startunittype1 {selectedUID}\n"
-        gcost = autocalc._scorechassiscombat(selectedUnit)
+        gcost = autocalc.scorechassiscombat(selectedUnit)
         gcost = max(2, gcost)
         multiplicity = max(1, int(200 / gcost))
         out += f"#startunitnbrs1 {multiplicity}\n"
         out += f"#startunittype2 {selectedUID2}\n"
-        gcost = autocalc._scorechassiscombat(selectedUnit2)
+        gcost = autocalc.scorechassiscombat(selectedUnit2)
         gcost = max(2, gcost)
         multiplicity2 = max(1, int(200 / gcost))
         out += f"#startunitnbrs2 {multiplicity2}\n"

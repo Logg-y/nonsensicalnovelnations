@@ -18,8 +18,8 @@ class Armour(object):
         self.enc = int(data["enc"])
         self.rcost = int(data["rcost"])
 
-        if self.origid in cache2:
-            self.zones = cache2[self.origid]
+        if len(cache2) > 0:
+            self.zones = cache2.get(self.origid, {})
         else:
             data = r"protections_by_armor.csv"
             with open(data, "r") as f:
@@ -30,7 +30,17 @@ class Armour(object):
                     if armid not in cache2:
                         cache2[armid] = {}
                     cache2[armid][zone] = cache2[armid].get(zone, 0) + int(line["protection"])
-            self.zones = cache2[self.origid]
+            if self.origid in cache2:
+                self.zones = cache2[self.origid]
+            else:
+                self.zones = {}
+        if self.type == 4:
+            self.prot = self.zones.get(5,0)
+        else:
+            self.prot = max(self.zones.get(1,0), round((self.zones.get(2,0) + self.zones.get(3,0) + self.zones.get(4,0))/4, 0))
+            self.prot += self.zones.get(6,0)
+            self.prot = int(self.prot)
+
     def __repr__(self):
         return f"Armour({self.name}#{self.origid})"
 

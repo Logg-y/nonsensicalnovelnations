@@ -42,6 +42,7 @@ def autocalcTool():
                 window["-unitidentity-"].update(f"{uid} - {unit.name}")
                 unitcost = autocalc.unit(unit)
                 window["-unitcost-"].update(str(unitcost))
+                print("\n\n\n -------------------------------- \n\n\n")
                 cmdrcost = autocalc.commander(unit)
                 window["-cmdrcost-"].update(str(cmdrcost))
                 window["-OUTPUT-"].update(sys.stdout.getvalue())

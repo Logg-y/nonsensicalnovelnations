@@ -9,3 +9,4 @@
 1002	-- asmeg jarl, bad sprite
 1413	-- trident lord, bad sprite
 1414	-- trident lord, bad sprite
+2147	-- seithmathr, bad sprite

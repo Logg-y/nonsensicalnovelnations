@@ -2,7 +2,7 @@ import math
 import csv
 import unitinbasedatafinder
 import utils
-
+from .common import effectiveWeaponDamage
 
 # This is NOT Illwinter's implementation of autocalc.
 # This is instead an implementation I made solely for the use of this mod, and it is probably quite wrong
@@ -62,6 +62,10 @@ def _getpowermagnitude(unit):
         ret += getattr(unit, "chaospower", 0)
     if getattr(unit, "magicpower", 0) > 0:
         ret += getattr(unit, "magicpower", 0)
+    if getattr(unit, "slothpower", 0) not in [0, -1]:
+        ret += abs(getattr(unit, "slothpower"))
+    if getattr(unit, "deathpower", 0) not in [0, -1]:
+        ret += abs(getattr(unit, "deathpower"))
     if getattr(unit, "yearturn", 0) > 0:
         ret += getattr(unit, "yearturn", 0)/3
     return ret
@@ -72,141 +76,22 @@ def _getoffense(unit, realstr, realprec, realatt):
     for weapon in unit.weapons:
         maxammoturns = max(weapon.getTurnsOfAmmo(), maxammoturns)
     for weapon in unit.weapons:
-        isSecondary = False
-        secondaryIsAlways = False
-        thisweapondmg = 0.0
-        while 1:
-            dmg = None
+        thisweapondmg = effectiveWeaponDamage(weapon, realstr)
 
-            dmg = weapon.getdamage(realstr)
+        if weapon.ammo > 0:
+            if weapon.getTurnsOfAmmo() < 5:
+                thisweapondmg *= (weapon.getTurnsOfAmmo() / 5)
+        elif weapon.ammo == 0 and maxammoturns >= 10:
+            # You probably won't be using your melee so much
+            thisweapondmg *= 0.8
 
-            # AN, affliction, charm/enslave, planeshift
-            if weapon.spec & 128 or weapon.effect % 1000 in [11, 28, 29, 99, 108]:
-                dmg = dmg
-            elif weapon.spec & 64:
-                dmg = (dmg - 5)
-            else:
-                dmg = (dmg - 10)
+        range = weapon.getrange(realstr)
+        if range > 1:
+            thisweapondmg *= getdrn((realprec + weapon.att) - (range / 5))
 
-            if weapon.effect % 1000 in utils.DAMAGING_EFFECTS:
-                pass
-            elif weapon.effect % 1000 in [28, 29, 99, 108, 116, 121, 122]: # enslave, charm, petrify, planeshift
-                dmg = 30 # or any swallowing effect
-            elif weapon.effect % 1000 in [46]: # fatigue poison
-                dmg /= 6
-            elif weapon.effect % 1000 in [3]: # fatigue
-                dmg /= 4
-            elif weapon.effect % 1000 in [11]: # cause affliction
-                dmg = 0
-                if weapon.damage & 1: dmg += 3      #disease
-                if weapon.damage & 2: dmg += 3      #curse
-                if weapon.damage & 4: dmg += 3      #starvation
-                if weapon.damage & 8: dmg += 40     #plague
-                if weapon.damage & 16: dmg += 3     #lost weapon
-                if weapon.damage & 32: dmg += 3     #curse of stones
-                if weapon.damage & 64: dmg += 6     #entangle
-                if weapon.damage & 128: dmg += 8    #rage
-                if weapon.damage & 256: dmg += 5    #decay
-                if weapon.damage & 512: dmg += 4    #burning
-                if weapon.damage & 1024: dmg += 4   #sleep
-                if weapon.damage & 4096: dmg += 8   #blind
-                if weapon.damage & 8192: dmg += 8   #bleeding
-                if weapon.damage & 16384: dmg += 6      #earthgrip
-                if weapon.damage & 65536: dmg += 6      #firebonds
-                if weapon.damage & 131072: dmg += 6     #falsefetters
-                if weapon.damage & 262144: dmg += 3     #limp
-                if weapon.damage & 524288: dmg += 3     #eyeloss
-                if weapon.damage & 1048576: dmg += 3    #weakness
-                if weapon.damage & 2097152: dmg += 3    #battlefright
-                if weapon.damage & 4194304: dmg += 5    #mute
-                if weapon.damage & 8388608: dmg += 3    #chestwound
-                if weapon.damage & 16777216: dmg += 4   #cripple
-                if weapon.damage & 33554432: dmg += 6   #feeblemind
-                if weapon.damage & 67108864: dmg += 3   #nhwound
-                if weapon.damage & 134217728: dmg += 5  #slimed
-                if weapon.damage & 268435456: dmg += 4  #frozen
-                if weapon.damage & 536870912: dmg += 5  #webbed
-                if weapon.damage & 1073741824: dmg += 5 #armloss
-                if weapon.damage & 2147483648: dmg += 10    #headloss
-                if weapon.damage & 4294967296: dmg += 5     #shrunk
-                if weapon.damage & 17179869184: dmg += 5    #confusion
-                if weapon.damage & 1125899906842624: dmg += 5    #net
-                if dmg == 0:
-                    dmg = None
-            elif weapon.effect % 1000 in [24, 32, 33, 73, 107, 75]:  # multiplicative damage types
-                dmg *= 2
-            elif weapon.effect % 1000 in [66]: # paralysis
-                dmg /= 5
-            elif weapon.effect % 1000 in [67]: # weakness
-                pass
-            elif weapon.effect % 1000 in [4]: # fear type one
-                dmg = weapon.getdamage(realstr)
-            elif weapon.effect % 1000 in [134]: # chain lightning
-                dmg *= 3
-            elif weapon.effect % 1000 in [128]: # stun
-                dmg = 4
-            else:
-                print(f"Unknown effect number for weapon {weapon.name}")
-                dmg = None
-
-
-            if dmg is not None:
-
-                if weapon.effect % 1000 == 109 or weapon.effect % 1000 == 139: # capped and capped poison
-                    dmg /= 4
-
-                dmg *= max(1, weapon.nratt)
-
-                if weapon.effect % 1000 in [103, 104]: #life drain or partial
-                    dmg *= 1.4
-                if weapon.aoe > 0:
-                    dmg *= (weapon.aoe * 1.25)
-                if weapon.ammo > 0:
-                    if weapon.getTurnsOfAmmo() < 5:
-                        dmg *= (weapon.getTurnsOfAmmo() / 5)
-                elif weapon.ammo == 0 and maxammoturns >= 10 and not isSecondary:
-                    # You probably won't be using your melee so much
-                    dmg *= 0.8
-
-                range = weapon.getrange(realstr)
-                if range > 1:
-                    dmg *= getdrn((realprec + weapon.att) - (range/5))
-
-                if weapon.aoe == 0 and range <= 1:
-                    finalatt = realatt + weapon.att
-                    dmg *= getdrn(finalatt - 11)
-
-                if weapon.spec & 4096: dmg /= 2  # MRN
-                if weapon.spec & 17592186044416: dmg /= 1.5  # MR hard
-                if weapon.spec & 16777216: dmg /= 3.5  # MR easy
-                if weapon.spec & 1048576: dmg /= 2  # def negate
-                if weapon.spec & 2305843009213693952: dmg /= 3 # MR for half
-
-                # Lingering
-                if weapon.effect > 1000:
-                    dmg *= 2 * (weapon.effect // 1000)
-
-                if weapon.effect % 1000 == 108: #petrify
-                    dmg /= 3
-
-                if isSecondary and (secondaryIsAlways == False):
-                    dmg /= 2
-
-            if dmg is not None:
-                thisweapondmg += dmg
-
-            if weapon.secondaryeffectalways is not None:
-                weapon = weapon.secondaryeffectalways
-                isSecondary = True
-                continue
-
-            if weapon.secondaryeffect is not None:
-                weapon = weapon.secondaryeffect
-                isSecondary = True
-                secondaryIsAlways = False
-                continue
-
-            break
+        if weapon.aoe == 0 and range <= 1:
+            finalatt = realatt + weapon.att
+            thisweapondmg *= getdrn(finalatt - 11)
 
         dmgcontribution = thisweapondmg
         print(f"Weapon damage for {weapon.name} and parents was {thisweapondmg}, contribution = {dmgcontribution},"
@@ -214,12 +99,12 @@ def _getoffense(unit, realstr, realprec, realatt):
         totalweapondmg += dmgcontribution
 
     if getattr(unit, "trample", 0) > 0:
-        wpnmult = 1/(8 - unit.size)
+        wpnmult = 1/(unit.size)
         totalweapondmg *= wpnmult
         print(f"Multiplied weapon damage by {wpnmult} due to trample")
         trampledmg = 2*unit.size * 9 # 5 + this, but is AP, plus extra for hit rate and aoe
-        if getattr(unit, "trampleswallow", 0):
-            trampledmg *= 1.5
+        if getattr(unit, "trampleswallow", 0) > 0 or getattr(unit, "trampswallow", 0):
+            trampledmg *= 3
         print(f"Trample added {trampledmg} dmg")
         totalweapondmg += trampledmg
 
@@ -232,6 +117,7 @@ def _getoffense(unit, realstr, realprec, realatt):
 
 def _getrealdef(unit):
     realdef = int(getattr(unit, "def", 0) - (max(0, getattr(unit, "berserk")) * 0.8))
+    realdef += max(0, getattr(unit, "horsetattoo", 0))
     shielddef = 0
     shieldprot = 0
     for armour in unit.armours:
@@ -255,37 +141,37 @@ def _getrealdef(unit):
         realdef += 3
 
     if getattr(unit, "eyeloss", 0) > 0:
-        realdef += 2 + getattr(unit, "eyeloss", 0)/2
+        realdef += 3 + getattr(unit, "eyeloss", 0)/2
 
     if getattr(unit, "petrify", 0) > 0:
-        realdef += 4 + getattr(unit, "petrify", 0)/2
+        realdef += 7 + getattr(unit, "petrify", 0)/2
 
-    maxawe = max(0, getattr(unit, "awe", 0), getattr(unit, "sunawe", 0), getattr(unit, "animalawe", 0)/2,
+    maxawe = max(0, getattr(unit, "awe", 0), getattr(unit, "sunawe", 0), getattr(unit, "animalawe", 0)/3,
                  getattr(unit, "haltheretic", 0)/2)
     if maxawe > 0:
-        realdef += 3
-        realdef += (maxawe / 2)
+        realdef += 1
+        realdef += maxawe
 
     if getattr(unit, "unsurr", 0) > 0:
         realdef += (getattr(unit, "unsurr", 0)/2)
 
     if getattr(unit, "slimer", 0) > 0:
-        realdef += 2 + (getattr(unit, "slimer", 0)/2)
+        realdef += 4 + (getattr(unit, "slimer", 0)/2)
 
     if getattr(unit, "entangle", 0) > 0:
-        realdef += 3 + (getattr(unit, "entangle", 0)/2)
+        realdef += 5 + (getattr(unit, "entangle", 0)/2)
 
     if getattr(unit, "mindslime", 0) > 0:
-        realdef += 2 + (min(30, getattr(unit, "mindslime", 0))/4)
+        realdef += (min(30, getattr(unit, "mindslime", 0))/2)
 
     if getattr(unit, "sleepaura", 0) > 0:
-        realdef += 2 + (min(30, getattr(unit, "sleepaura", 0))/4)
+        realdef += (min(30, getattr(unit, "sleepaura", 0))/2)
 
     if getattr(unit, "invisible", 0) > 0:
-        realdef += 5
+        realdef += 8
 
     if getattr(unit, "unseen", 0) > 0:
-        realdef += 3
+        realdef += 5
 
     realdef += _getpowermagnitude(unit)
 
@@ -293,12 +179,14 @@ def _getrealdef(unit):
 
 def _getrealatt(unit):
     realatt = int(unit.att + (max(0, getattr(unit, "berserk")) * 0.8))
+    realatt += max(0, getattr(unit, "wolftattoo", 0))
     realatt -= unit.getOldAgePenalty()
     realatt += _getpowermagnitude(unit)
     return realatt
 
 def _getrealstr(unit):
     realstr = int(unit.str + (max(0, getattr(unit, "berserk")) * 0.8))
+    realstr += max(0, getattr(unit, "beartattoo", 0))
     realstr -= unit.getOldAgePenalty()
     realstr += _getpowermagnitude(unit)
     return realstr
@@ -327,21 +215,33 @@ def _getrealmaxhp(unit):
     if getattr(unit, "undying", 0) > 0:
         realmaxhp += getattr(unit, "undying", 0)
 
+    if getattr(unit, "corpseeater", 0) > 0:
+        realmaxhp += getattr(unit, "corpseater", 0) * getattr(unit, "deadhp", 1) * 5
+
     totalregen = max(0, getattr(unit, "regeneration", 0)) + max(0, getattr(unit, "uwregen", 0))
-    totalregen += max(0, getattr(unit, "incorporate", 0))
+    totalregen += 3 * max(0, getattr(unit, "incorporate", 0))
     if totalregen > 0:
-        regenvalue = 0.3 * totalregen * 2 ** ((realmaxhp - 10)/27)
+        regenvalue = 0.3 * totalregen * 2 ** ((realmaxhp - 15)/40)
         print(f"Regen increased max hp from {realmaxhp} to {realmaxhp + regenvalue}")
         realmaxhp += regenvalue
 
     if getattr(unit, "ethereal", 0) > 0:
         realmaxhp *= 1.4
 
+    chancetodie = 100 - max(0, getattr(unit, "reform", 0))
+    realmaxhp *= (100/chancetodie)
+
+    if getattr(unit, "bugreform", 0) > 0:
+        realmaxhp *= 2
+
     return realmaxhp
 
 def _getrealprot(unit, commandermode=False):
     natprot = getattr(unit, "prot", 0)
     invuln = getattr(unit, "invulnerable", 0)
+    for tattoo in ["beartattoo", "wolftattoo", "boartattoo", "horsetattoo", "snaketattoo"]:
+        if getattr(unit, tattoo, 0) > 0:
+            invuln = max(10, invuln)
     if invuln * 2/3 > natprot:
         natprot = invuln
 
@@ -394,6 +294,8 @@ def _callForOtherShapes(unit, func, retval, altshapelist, donotaddsecondshapes=F
                 retval = max(retval, newshapescore)
             else:
                 print(f"{retval} increased by {attrib}'s {newshapescore}")
+                if attrib == "secondtmpshape":
+                    newshapescore *= 0.5
                 retval += newshapescore
     return retval
 
@@ -412,8 +314,8 @@ def _getrepelvalue(unit, realatt):
         if unit.size >= 4:
             reallen += 1
         attForThisWeapon = realatt + weapon.att
-        attdrn = 1 + 3 * ((attForThisWeapon - 10) / 11) ** 3 + (attForThisWeapon - 10) / 4
-        contributionForThisWeapon = attdrn * lengthToRepelCapacity[reallen]
+        attdrn = 1 + 3 * ((attForThisWeapon - 10) / 14) ** 3 + (attForThisWeapon - 10) / 4
+        contributionForThisWeapon = attdrn * lengthToRepelCapacity.get(reallen, 0)
         print(f"Repel contribution for {weapon.name} = {contributionForThisWeapon}")
         repelvalue += contributionForThisWeapon
     print(f"Total repel value: {repelvalue}")
@@ -425,7 +327,7 @@ def _getrepelvalue(unit, realatt):
 
 
 
-def _scorechassiscombat(unit, altshapes=None, commandermode=False):
+def scorechassiscombat(unit, altshapes=None, commandermode=False):
     if altshapes is None:
         altshapelist = [unit.origid]
     else:
@@ -435,7 +337,7 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         altshapelist.append(unit.origid)
 
     print(f"Begin chassis score for unit {unit.id}: {unit.name}")
-    realmr = unit.mr
+    realmr = unit.mr + max(0, getattr(unit, "snaketattoo", 0))
     realprec = unit.prec
 
     oldagepenalty = unit.getOldAgePenalty()
@@ -464,7 +366,7 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
     #mordrn = 2 ** ((realmor - 10)/4)
 
 
-    defdrn = 1 + 3 * ((realdef - 10)/11)**3 + (realdef - 10)/4
+    defdrn = 1 + 3 * ((realdef - 10)/14)**3 + (realdef - 10)/4
     mrdrn = 1 + 3 * ((realmr - 12)/18)**3 + (realmr - 12)/4
     mordrn = 1 + 3 * ((realmor - 10)/18)**3 + (realmor - 12)/6
 
@@ -523,6 +425,10 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         print(f"Fearcost: {fearcost}")
         retval += fearcost
 
+    # The bug spawning part, the ppyre-lite went into the hp calc
+    if getattr(unit, "bugreform", 0) > 0:
+        retval += getattr(unit, "bugreform", 0)
+
     totalaura = max(0, getattr(unit, "heat", 0), getattr(unit, "cold", 0), getattr(unit, "uwheat", 0))
     if totalaura > 0:
         auraval = 2 ** ((totalaura - 3)/10)
@@ -541,6 +447,12 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         abilityval = 2 ** ((getattr(unit, "fireshield", 0) - 5)/5)
         abilitycost = 1/2 * hpscalar * abilityval
         print(f"Fireshield cost: {abilitycost}")
+        retval += abilitycost
+
+    if getattr(unit, "overcharged", 0) > 0:
+        abilityval = 1
+        abilitycost = 1/2 * hpscalar * abilityval
+        print(f"overcharged cost: {abilitycost}")
         retval += abilitycost
 
     if getattr(unit, "curseluckshield", 0) > 0:
@@ -591,6 +503,12 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         print(f"Banefireshield cost: {abilitycost}")
         retval += abilitycost
 
+    if getattr(unit, "bloodvengeance", 0) > 0:
+        abilityval = (getattr(unit, "damagerev", 0))
+        abilitycost = hpscalar * abilityval
+        print(f"Blood vengeance cost: {abilitycost}")
+        retval += abilitycost
+
     if getattr(unit, "damagerev", 0) > 0:
         abilityval = 2 ** (getattr(unit, "damagerev", 0))
         abilitycost = hpscalar * abilityval
@@ -614,6 +532,10 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         retval *= 1.7
     if getattr(unit, "undead", 0) > 0:
         retval *= 0.75
+    if getattr(unit, "magicbeing", 0) > 0:
+        retval *= 0.9
+    if getattr(unit, "blind", 0) > 0:
+        retval *= 1.05
     if getattr(unit, "animal", 0) > 0:
         retval *= 0.85
     if getattr(unit, "coldblood", 0) > 0:
@@ -624,7 +546,7 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         retval *= 0.7
     if getattr(unit, "startaff", 0) > 0:
         retval *= 1.00 - (getattr(unit, "startaff", 0) * 0.003)
-    if getattr(unit, "teleport", 0) > 0:
+    if getattr(unit, "teleport", 0) > 0 or getattr(unit, "blink", 0) :
         retval *= 1.25
     if getattr(unit, "darkvision", 0) > 0:
         retval *= 1.00 + (getattr(unit, "darkvision", 0) * 0.0005)
@@ -653,25 +575,25 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
     for x in range(1, 6):
         attrib = f"battlesum{x}"
         if getattr(unit, attrib, 0) > 0:
-            addition = 2.5 * x * _scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
+            addition = 2.5 * x * scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
             print(f"{attrib} added {addition}")
             retval += addition
     for x in range(1, 6):
         attrib = f"batstartsum{x}"
         if getattr(unit, attrib, 0) > 0:
-            addition = x * _scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
+            addition = x * scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
             print(f"{attrib} added {addition}")
             retval += addition
 
     for x in range(1, 10):
         attrib = f"batstartsum{x}d6"
         if getattr(unit, attrib, 0) > 0:
-            addition = 3 * x * _scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
+            addition = 3 * x * scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
             print(f"{attrib} added {addition}")
             retval += addition
     attrib = f"batstartsum1d3"
     if getattr(unit, attrib, 0) > 0:
-        addition = 1.5 * x * _scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
+        addition = 1.5 * x * scorechassiscombat(unitinbasedatafinder.get(getattr(unit, attrib, 0)))
         print(f"{attrib} added {addition}")
         retval += addition
 
@@ -690,7 +612,7 @@ def _scorechassiscombat(unit, altshapes=None, commandermode=False):
         print(f"deathparalyze added {addition}")
         retval += addition
 
-    retval = _callForOtherShapes(unit, _scorechassiscombat, retval, altshapelist)
+    retval = _callForOtherShapes(unit, scorechassiscombat, retval, altshapelist)
 
 
 
@@ -713,6 +635,8 @@ def _scorechassisnoncombat(unit, altshapes=None):
         retval += getattr(unit, "patrolbonus", 0)
     if getattr(unit, "nobadevents", 0) > 0:
         retval += getattr(unit, "nobadevents", 0)/5
+    if getattr(unit, "reanimator", 0) > 0:
+        retval += getattr(unit, "reanimator", 0) * 2
     if getattr(unit, "leper", 0) > 0:
         attribval = getattr(unit, "leper", 0)
         if getattr(unit, "stealthy", 0) > 0:
@@ -729,6 +653,8 @@ def _scorechassisnoncombat(unit, altshapes=None):
         retval += getattr(unit, "siegebonus", 0)/10
     if getattr(unit, "defenceorganiser", 0) > 0:
         retval += getattr(unit, "defenceorganiser", 0)
+    if getattr(unit, "incprovdef", 0) > 0:
+        retval += getattr(unit, "incprovdef", 0)
     if getattr(unit, "supplybonus", 0) > 0:
         retval += getattr(unit, "supplybonus", 0)/30
     if float(getattr(unit, "incunrest", 0)) > 0:
@@ -752,7 +678,7 @@ def _scorechassisnoncombat(unit, altshapes=None):
     if getattr(unit, "corpseeater", 0) > 0:
         retval += 30
     if getattr(unit, "spreaddom", 0) > 0:
-        retval += getattr(unit, "spreaddom", 0) * 200
+        retval += getattr(unit, "spreaddom", 0) * 280
     if getattr(unit, "comslave", 0) > 0:
         retval += 40
     if getattr(unit, "stealthy", 0) > 0:
@@ -850,7 +776,7 @@ def _scorechassiscmdronly(unit, score, altshapes=None):
         if spellid == 79: #rain
             retval += 50
         if spellid == 62: #foul vapors (telkhines)
-            retval += 150
+            retval += 200
 
     callable = lambda x, y, z=score: _scorechassiscmdronly(x, z, y)
     retval = _callForOtherShapes(unit, callable, retval, altshapelist, donotaddsecondshapes=True)
@@ -891,15 +817,37 @@ def _scoremisccmdronly(unit, score, altshapes=None):
     if getattr(unit, "carcasscollector", 0) > 0:
         retval += 5
 
+    # Inspector "summon" corresponds to illwinter's makemonsters1...5
     if getattr(unit, "summon", 0) > 0:
         unittype = getattr(unit, "summon", 0)
         qty = getattr(unit, "n_summon", 1)
-        retval += unitscore(unitinbasedatafinder.get(unittype)) * 5 * qty
+        retval += unitscore(unitinbasedatafinder.get(unittype)) * 4 * qty
+    for qty in range (1, 6):
+        attrib = f"makemonsters{qty}"
+        if getattr(unit, attrib, 0) not in [0, -1]:
+            unittype = getattr(unit, attrib, 0)
+            retval += unitscore(unitinbasedatafinder.get(unittype)) * 4 * qty
 
+    # Inspector "autosum" corresponds to illwinter's summon1...5
     if getattr(unit, "autosum", 0) > 0:
         unittype = getattr(unit, "autosum", 0)
         qty = getattr(unit, "n_autosum", 1)
         retval += unitscore(unitinbasedatafinder.get(unittype))  * 5 * qty
+    for qty in range (1, 6):
+        attrib = f"summon{qty}"
+        if getattr(unit, attrib, 0) not in [0, -1]:
+            unittype = getattr(unit, attrib, 0)
+            retval += unitscore(unitinbasedatafinder.get(unittype)) * 5 * qty
+
+    # The inspector currently has domsummon2 down as regular domsummon!
+    # Great boars of carnutes are probably half as good as people might think on paper
+    if getattr(unit, "domsummon", 0) not in [0, -1]:
+        unittype = getattr(unit, "domsummon", 0)
+        retval += unitscore(unitinbasedatafinder.get(unittype)) * 5 * 5
+
+    if getattr(unit, "domsummon2", 0) not in [0, -1]:
+        unittype = getattr(unit, "domsummon2", 0)
+        retval += unitscore(unitinbasedatafinder.get(unittype)) * 5 * 2.5
 
     if getattr(unit, "turmoilsummon", 0) > 0:
         unittype = getattr(unit, "turmoilsummon", 0)
@@ -945,7 +893,10 @@ def _scoremisccmdronly(unit, score, altshapes=None):
         addition = max(0, addition)
         retval += addition
     if getattr(unit, "slaver", 0) > 0:
-        retval += 50
+        unittype = getattr(unit, "slaver", 0)
+        bonus = getattr(unit, "slaverbonus", 0)
+        qty = 8 + bonus
+        retval += unitscore(unitinbasedatafinder.get(unittype)) * 5
     if getattr(unit, "heathensummon", 0) > 0:
         retval += 50
     if getattr(unit, "plaguedoctor", 0) > 0:
@@ -974,20 +925,22 @@ def _universalmultipliers(unit, altshapes=None):
     reformtime = 3 + getattr(unit, "reformtime", 0)
 
     if getattr(unit, "domimmortal", 0) > 0:
-        retval += 0.7
+        retval += 0.5
         if reformtime == 2:
-            retval += 0.2
+            retval += 0.15
         if reformtime == 1:
-            retval += 0.4
+            retval += 0.3
 
-    if getattr(unit, "immortal", 0) > 0:
-        retval += 1.5
+    if getattr(unit, "springimmortal", 0) > 0:
+        retval += 0.4
+    elif getattr(unit, "immortal", 0) > 0:
+        retval += 0.7
         if getattr(unit, "immortalrespawn", 0) > 0:
-            retval -= 0.8
+            retval -= 0.2
         elif reformtime == 2:
-            retval += 0.5
+            retval += 0.2
         elif reformtime == 1:
-            retval += 1.0
+            retval += 0.4
 
     if getattr(unit, "homesick", 0) > 0:
         turnstodeath = 100/getattr(unit, "homesick", 0)
@@ -996,6 +949,9 @@ def _universalmultipliers(unit, altshapes=None):
 
     if getattr(unit, "horrordeserter", 0) > 0:
         retval -= getattr(unit, "horrordeserter", 0)/100
+
+    if getattr(unit, "deserter", 0) > 0:
+        retval -= getattr(unit, "deserter", 0)/100
 
     if getattr(unit, "defector", 0) > 0:
         retval -= getattr(unit, "defector", 0)/70
@@ -1013,7 +969,7 @@ pathcost_multipliers = {"enc":0.99, "reinvigoration":1.01, "bonusspells":1.2, "s
                         "popkill":0.999, "heretic":0.95, "blessbers":0.75, "elementrange":1.05, "sorceryrange":1.05,
                         "firerange":1.02, "astralrange":1.02, "landreinvigoration":1.01, "naturerange":1.02,
                         "reincarnation":1.01, "tmpastralgems":1.05, "tmpfiregems":1.05, "mountedberserk":0.9,
-                        "landenc":0.99, "randomspell":0.99, "immobile":0.3}
+                        "landenc":0.99, "randomspell":0.99, "immobile":0.3, "fastcast":1.005}
 pathcost_additions = {"researchbonus":4, "crossbreeder":0.3, "lamialord":0.5, "dragonlord":1, "slothresearch":6,
                       "ivylord":1, "magicstudy":8, "stygianguide":0.05, "elegist":7, "fixedresearch":2,
                       "dreanimator":2, "inquisitor":7, "douse":5}
@@ -1059,7 +1015,8 @@ def commander(unit, forTempUnits=False):
                 proportionoftotal = addition/sumOfPaths
                 amounttomess = 1-proportionoftotal
                 widemod = 1 - math.sqrt(1/numOfPaths)
-                proportionOfBiggestMod = math.sqrt(pathlevel/maxpathLevel)
+                proportionOfBiggestMod = 1.5 - math.sqrt(pathlevel/maxpathLevel)
+                print(f"Amount to mess: {amounttomess}, widemod: {widemod}, proportionOfBiggestMod: {proportionOfBiggestMod}")
                 print(f"Spread out mage modifier subtracts {addition * amounttomess * proportionOfBiggestMod * widemod}")
                 addition -= addition * amounttomess * proportionOfBiggestMod * widemod
             pathpoints += addition
@@ -1112,11 +1069,11 @@ def commander(unit, forTempUnits=False):
     print(f"Leadership cost: {leadership_cost}")
 
     if not forTempUnits:
-        chassis_cost = 10 + _scorechassiscombat(unit, commandermode=True) + _scorechassisnoncombat(unit)
+        chassis_cost = 10 + scorechassiscombat(unit, commandermode=True) + _scorechassisnoncombat(unit)
         chassis_cost = _scoremisccmdronly(unit, chassis_cost)
         chassis_cost = _scorechassiscmdronly(unit, chassis_cost)
     else:
-        chassis_cost = 10 + _scorechassiscombat(unit, commandermode=True)
+        chassis_cost = 10 + scorechassiscombat(unit, commandermode=True)
 
     print(f"chassis cost: {chassis_cost}")
     mult = chassis_cost / 300
@@ -1136,7 +1093,7 @@ def commander(unit, forTempUnits=False):
 
 
 def unit(unit):
-    chassis = _scorechassiscombat(unit) + _scorechassisnoncombat(unit)
+    chassis = scorechassiscombat(unit) + _scorechassisnoncombat(unit)
     chassis = _scoremiscunitonly(unit, chassis)
     universalmult = _universalmultipliers(unit)
     print(f"universal mult: {universalmult}")
@@ -1144,3 +1101,5 @@ def unit(unit):
     retval = int(round(retval, 0))
     print(f"Final unit score: {retval}\n\n\n")
     return max(1, retval)
+
+unitscore = unit

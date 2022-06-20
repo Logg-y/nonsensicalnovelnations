@@ -43,8 +43,9 @@ def getMontagSummonAIScore(montagID):
 
 # keys which should not be set at all if no value is passed. Otherwise -1 is set
 _badkeys = ["siegebonus", "castledef", "patrolbonus", "pathboost", "pathboostuw", "magicboostF", "magicboostA",
-            "magicboostW", "magicboostE", "magicboostS", "magicboostD", "magicboostN", "magicboostALL", "foreignmagicboost",
-            "pathboostuw", "pathboostland", "percentagepathreduction", "reinvigoration", "fireres", "coldres", "shockres",
+            "magicboostW", "magicboostE", "magicboostS", "magicboostD", "magicboostN", "magicboostB", "magicboostALL",
+            "foreignmagicboost", "pathboostuw", "pathboostland", "percentagepathreduction", "reinvigoration",
+            "fireres", "coldres", "shockres",
             "poisonres", "landreinvigoration", "reformtime"]
 
 class MagePathRandom(object):
@@ -63,6 +64,25 @@ class MagePathRandom(object):
             if (2 ** exponent) > self.paths:
                 break
         return out
+
+    def addToUnit(self, unit):
+        """Adds this MagePathRandom to the specified unit. Returns True on success, or False on failure
+        - units may have only 6 randoms"""
+        # Find the (n) we can add to
+        for n in range(1, 8):
+            mask = getattr(unit, f"mask{n}", 0) >> 7
+            if mask <= 0:
+                break
+        if n >= 7:
+            return False
+        print(f"Added path random {str(self)} to {unit.name} at index {n}")
+        setattr(unit, f"mask{n}", self.paths << 7)
+        setattr(unit, f"link{n}", self.link)
+        setattr(unit, f"nbr{n}", 1)
+        setattr(unit, f"rand{n}", self.chance)
+        return True
+
+
 
     def __repr__(self):
         return f"MagePathRandom(Paths={self.paths}, link={self.link}, chance={self.chance})"
@@ -178,9 +198,11 @@ class UnitInBaseDataFinder(object):
         for attrib in gcostattribsFlat:
             if getattr(self, attrib, 0) > 0:
                 realeffectsizes[attrib] = gcostattribsFlat[attrib]
+                realgcost -= gcostattribsFlat[attrib]
         for attrib in gcostattribsMagnitudeMult:
             if getattr(self, attrib, 0) > 0:
                 realeffectsizes[attrib] = getattr(self, attrib, 0) * gcostattribsMagnitudeMult[attrib]
+                realgcost -= getattr(self, attrib, 0) * gcostattribsMagnitudeMult[attrib]
 
         # of the above, mountainrec cannot currently be cleared via mod commands
         unmoddableCmds = ["mountainrec"]
