@@ -745,22 +745,26 @@ def _scorechassiscmdronly(unit, score, altshapes=None):
     if getattr(unit, "scalewalls", 0) > 0:
         retval += 20
 
+    slotmult = 1.0
+
     if getattr(unit, "hand", 0) == 0:
-        retval *= 0.8
+        slotmult *= 0.8
     if getattr(unit, "hand", 0) > 2:
-        retval *= 1.2
+        slotmult *= 1.2
     if getattr(unit, "head", 0) > 1:
-        retval *= 1.05
+        slotmult *= 1.05
     if getattr(unit, "head", 0) == 0:
-        retval *= 0.9
+        slotmult *= 0.9
     if getattr(unit, "body", 0) == 0:
-        retval *= 0.8
+        slotmult *= 0.8
     if getattr(unit, "foot", 0) == 0:
-        retval *= 0.95
+        slotmult *= 0.95
     if getattr(unit, "crownonly", 0) > 0:
-        retval *= 0.95
+        slotmult *= 0.95
     if getattr(unit, "immobile", 0) > 0:
-        retval *= 0.8
+        slotmult *= 0.8
+    slotmult = max(1.0, slotmult)
+    retval *= slotmult
 
     if getattr(unit, "spy", 0) > 0:
         retval += 15
